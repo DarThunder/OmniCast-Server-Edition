@@ -1,3 +1,7 @@
+# OmniCast — Personal offline media server
+# Copyright (C) 2026-Present  DarThunder
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 from contextlib import asynccontextmanager
 import mimetypes
 import os
@@ -21,7 +25,7 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 def live():
-    return {"message": "Hola pim"}
+    return {"message": "Hello pim"}
 
 @app.get("/videos")
 def list_videos():
@@ -31,14 +35,14 @@ def list_videos():
 def get_thumbnail_route(hash: str):
     thumb_path = get_thumbnail_file(hash)
     if not thumb_path:
-        raise HTTPException(status_code=404, detail="Miniatura no encontrada")
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
     return FileResponse(thumb_path)
 
 @app.get("/video/{hash}")
 async def get_video_route(hash: str, request: Request):
     video_path = get_video_file(hash)
     if not video_path:
-        raise HTTPException(status_code=404, detail="Video no encontrado")
+        raise HTTPException(status_code=404, detail="Video not found")
     
     file_size = os.path.getsize(video_path)
     range_header = request.headers.get("Range")
@@ -113,7 +117,7 @@ async def get_video_route(hash: str, request: Request):
 @app.post("/videos")
 def set_video_route(url: str, background_tasks: BackgroundTasks):
     background_tasks.add_task(download_video, url)
-    return {"Message": "¡Descarga iniciada en segundo plano! Estará lista pronto."}
+    return {"Message": "¡Download initiating in background! It be ready soon."}
 
 @app.get("/debug/tasks")
 async def debug_tasks():

@@ -1,3 +1,7 @@
+# OmniCast — Personal offline media server
+# Copyright (C) 2026-Present  DarThunder
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 import socket
 import threading
 from time import sleep
@@ -43,17 +47,17 @@ class Shrieker:
         self.thread.start()
 
     def _loop(self):
-        print(f"Iniciando servidor OmniCast en {self.ip_address}:{self.port}...")
+        print(f"Iniciating OmniCast server in {self.ip_address}:{self.port}...")
         self.zeroconf = Zeroconf(interfaces=[self.ip_address])
         self.zeroconf.register_service(self.info)
-        print("Servicio registrado correctamente en la red local.")
+        print("Service registered successfully in the local network.")
 
         while self.running:
             # i hate this goofy ass hack, but this mf doesn't work if i delete this update_service
             self.zeroconf.update_service(self.info)
             sleep(3)
 
-        print("\nApagando broadcast mDNS...")
+        print("\nshutting down broadcast mDNS...")
         self.zeroconf.unregister_service(self.info)
         self.zeroconf.close()
 

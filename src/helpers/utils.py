@@ -1,3 +1,7 @@
+# OmniCast — Personal offline media server
+# Copyright (C) 2026-Present  DarThunder
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 import hashlib
 import json
 from src.helpers import configs

@@ -1,3 +1,7 @@
+# OmniCast — Personal offline media server
+# Copyright (C) 2026-Present  DarThunder
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 import datetime
 import json
 from pathlib import Path
@@ -10,7 +14,7 @@ def download_video(url: str) -> bool:
             info = ydl.extract_info(url, download=False)
 
         if not info:
-            print("No se pudo extraer info del video")
+            print("can't extract the video info")
             return False
 
         v_hash = gen_hash(info)
@@ -53,9 +57,9 @@ def download_video(url: str) -> bool:
         with yt_dlp.YoutubeDL(dl_opts) as ydl_dl:
             ydl_dl.download([url])
 
-        print(f"Descargado: {metadata['title'][:70]}...")
+        print(f"Downloading: {metadata['title'][:70]}...")
         return True
 
     except Exception as e:
-        print(f"Error descargando {url}: {e}")
+        print(f"Error downloading {url}: {e}")
         return False
