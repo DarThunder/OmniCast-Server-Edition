@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108" role="img" aria-label="OmniCast">
+  <defs>
+    <linearGradient id="omni-silver" gradientUnits="userSpaceOnUse" x1="19" y1="39" x2="89" y2="69">
+      <stop offset="0" stop-color="#E4E7EB"/>
+      <stop offset="0.5" stop-color="#A7ADB5"/>
+      <stop offset="1" stop-color="#5E636B"/>
+    </linearGradient>
+  </defs>
+  <rect width="108" height="108" rx="24" fill="#121212"/>
+  <path d="M54,54 L45.32,69.04 L27.96,69.04 L19.28,54 L27.96,38.96 L45.32,38.96 Z M88.72,54 L80.04,69.04 L62.68,69.04 L54,54 L62.68,38.96 L80.04,38.96 Z"
+        fill="none" stroke="url(#omni-silver)" stroke-width="4.2" stroke-linejoin="round"/>
+  <path d="M46.16,54 L41.4,62.23 L31.88,62.23 L27.12,54 L31.88,45.77 L41.4,45.77 Z M80.88,54 L76.12,62.23 L66.6,62.23 L61.84,54 L66.6,45.77 L76.12,45.77 Z"
+        fill="none" stroke="#5E636B" stroke-width="2.2" stroke-linejoin="round"/>
+</svg>

@@ -2,133 +2,162 @@
 
 > The thing that actually does the work.
 
-OmniCast Server is the backend half of the OmniCast ecosystem — a self-hosted, zero-configuration media server designed to run on whatever hardware you have lying around. A laptop, a NUC, a Raspberry Pi, a machine on a UPS. If it runs Python, it runs OmniCast.
+OmniCast Server is the backend core of the OmniCast ecosystem — a self-hosted, personal offline media server designed to archive, manage, and stream audio and video content. Built on FastAPI and SQLAlchemy, it turns local storage into an authenticated, multi-user media streaming hub.
 
-**Works without internet once content is downloaded. Your hardware, your content, your rules.**
+Works without internet once content is archived. Your hardware, your media, your rules.
 
 ---
 
 ## What it does
 
-- Announces itself on your local network via mDNS/Zeroconf — the Android client finds it automatically, no IP addresses required
-- Downloads videos from any yt-dlp-supported source and stores them locally
-- Serves video with HTTP range requests for smooth seeking
-- Deduplicates content using SHA3-512 hashing — the same video downloaded twice takes space only once
-- Generates and serves thumbnails alongside video metadata
-- Does all of this without touching the internet on its own — every download is explicitly triggered by the user
+- **Dual-Media Ingestion:** Imports media sources using yt-dlp-compatible extractors in background tasks with real-time download and extraction progress tracking.
+
+- **Audio Extraction & Metadata Enrichment:** Extracts audio to Opus and resolves clean track titles, artist details, and album covers via Spotify catalog integration.
+
+- **Smooth Streaming:** Supports HTTP byte-range requests (RFC 7233) for both video and audio streaming, enabling instant seeking and low memory overhead.
+
+- **Deduplication Engine:** Identifies incoming media through deterministic SHA3-512 hashing derived from media source attributes.
+
+- **Multi-User & Security:** Built-in JWT bearer token authentication, bcrypt password hashing, and isolated user profiles for favorites and custom playlists.
+
+- **Local Persistence:** Retains global media catalogs and user data using SQLite.
 
 ---
 
 ## Requirements
 
 - Python 3.11+
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp)
-- [FastAPI](https://fastapi.tiangolo.com/) + [uvicorn](https://www.uvicorn.org/)
-- [zeroconf](https://pypi.org/project/zeroconf/)
-- [aiofiles](https://pypi.org/project/aiofiles/)
+
+- FFmpeg (required by `yt-dlp` for audio extraction and transcoding)
+
+- Dependencies:
 
 ```bash
-pip install fastapi uvicorn yt-dlp zeroconf aiofiles
+pip install fastapi uvicorn yt-dlp aiofiles sqlalchemy pyjwt passlib[bcrypt] pillow requests python-dotenv
+
 ```
+
+---
+
+## Configuration
+
+The server expects a configuration file located at `~/.config/omnicast/.env`:
+
+```env
+OMNICAST_SECRET=your_super_secret_jwt_key
+SPOTIPY_CLIENT_ID=your_spotify_client_id          # Optional: for music metadata matching
+SPOTIPY_CLIENT_SECRET=your_spotify_client_secret  # Optional: for music metadata matching
+
+```
+
+Media files and database storage default to `~/omnicast/store/`.
 
 ---
 
 ## Running the server
 
 ```bash
-uvicorn src:app --host 0.0.0.0 --port 8080 --timeout-keep-alive 30
+python run.py
+
 ```
 
-The server will announce itself on the local network immediately. The Android client will find it on its own.
-
-Videos are stored at `~/omnicast/store/` by default.
+By default, the server listens on port `8081`. When paired with private mesh overlays like Tailscale or local networks, it serves clients securely without exposing raw ports to the public internet.
 
 ---
 
-## API
+## API Overview
 
-| Method | Endpoint            | Description                              |
-| ------ | ------------------- | ---------------------------------------- |
-| `GET`  | `/health`           | Health check                             |
-| `GET`  | `/videos`           | List all videos with metadata            |
-| `GET`  | `/video/{hash}`     | Stream a video (supports range requests) |
-| `GET`  | `/thumbnail/{hash}` | Get video thumbnail                      |
-| `POST` | `/videos?url=...`   | Queue a video download                   |
+### Authentication & Public Routes
 
-Downloads run as background tasks — the endpoint returns immediately and the video appears in the library once it's done.
+| Method | Endpoint  | Description            |
+| ------ | --------- | ---------------------- |
+| `GET`  | `/health` | Server heartbeat check |
+
+|
+| `POST` | `/register` | Register a new user account
+
+|
+| `POST` | `/token` | OAuth2 password flow login (returns JWT)
+
+|
+| `GET` | `/thumbnail/{hash}` | Retrieve public media thumbnail
+
+|
+
+### Authenticated Media Routes (`Bearer <token>`)
+
+| Method | Endpoint | Description                                        |
+| ------ | -------- | -------------------------------------------------- | ----- | ----------------------- |
+| `GET`  | `/feed`  | Paginated feed of archived media (`?media_type=all | video | music&skip=0&limit=50`) |
+
+|
+| `GET` | `/feed/library` | Filter library media by media type
+
+|
+| `POST` | `/videos` | Queue a background video download task (`?url=...`)
+
+|
+| `POST` | `/music` | Queue a background music extraction task (`?url=...`)
+
+|
+| `GET` | `/videos/progress/{task_id}` | Poll download progress, speed, percentage, and ETA
+
+|
+| `GET` | `/video/{hash}` | Stream video file with partial range support
+
+|
+| `GET` | `/music/{hash}` | Stream audio file with partial range support
+
+|
+| `GET` | `/music/{hash}/download` | Download standalone audio file with sanitized track title
+
+|
+| `GET` | `/users/me/favorites` | List current user's favorite items
+
+|
+| `POST` | `/users/me/favorites/{hash}` | Add a media item to current user's favorites
+
+|
+| `GET` | `/users/me/playlists/{name}` | Fetch playlist contents
+
+|
+| `POST` | `/users/me/playlists/{name}/{hash}` | Add a media item to an existing or new playlist
+
+|
 
 ---
 
-## How content is stored
+## Storage Layout
 
-Each video lives in its own directory, identified by a SHA3-512 hash derived from the video's metadata (not the file itself):
-
-```
-~/omnicast/store/
-└── a282b5c4750d.../
-    ├── media.mp4
-    ├── media.webp       ← thumbnail
-    └── metadata.json    ← title, duration, id
-```
-
-This means re-downloading the same video from a different quality or at a different time will still resolve to the same hash — no duplicates.
-
----
-
-## Architecture
+Media and database assets are structured on the local filesystem:
 
 ```
-[Android client] ──── HTTP (local network) ────> [FastAPI + uvicorn]
-                                                         │
-                              ┌──────────────────────────┤
-                              │                          │
-                       [yt-dlp downloader]      [~/omnicast/store/]
-                              │                          │
-                              └──────── writes ──────────┘
+~/omnicast/
+├── store/
+│   ├── omnicast.db            ← SQLite database (users, playlists, catalog)
+│   ├── videos/
+│   │   └── <sha3_512_hash>/
+│   │       ├── media.mp4
+│   │       ├── media.webp     ← video thumbnail
+│   │       └── metadata.json
+│   └── music/
+│       └── <sha3_512_hash>/
+│           ├── media.opus
+│           ├── media.webp     ← album artwork
+│           └── metadata.json
+
 ```
-
-The server is stateless. All persistence lives on the filesystem. No database, no cache layer, no cloud dependencies.
-
----
-
-## Network behavior
-
-OmniCast Server uses mDNS (via Zeroconf) to broadcast its presence on the local network under the `_omnicast._tcp` service type. The Android client listens for this and connects automatically.
-
-This means:
-
-- No manual IP configuration ever
-- Works as long as the server and client are on the same network
-- Stops broadcasting cleanly when the server shuts down
-
-The server is designed exclusively for **local network use**. It has no authentication, no TLS, and no rate limiting — exposing it to the public internet is your problem, not ours.
-
----
-
-## Roadmap
-
-- [x] Video download via yt-dlp
-- [x] HTTP range request streaming
-- [x] mDNS auto-discovery
-- [x] SHA3-512 deduplication
-- [x] Thumbnail serving
-- [x] HTTP keep-alive / connection pooling
-- [ ] Authentication — JWT + bcrypt/Argon2
-- [ ] Multi-user support — per-user progress, favorites
-- [ ] Configurable storage path via CLI args
-- [ ] Garbage collector — cleanup by views, age, or disk usage
-- [ ] Download queue status endpoint
 
 ---
 
 ## Legal Notice
 
-OmniCast Server uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for video downloading. **You are solely responsible for ensuring that any content you download complies with the terms of service of the source platform, applicable copyright law, and any relevant regulations in your jurisdiction.**
+OmniCast Server utilizes `yt-dlp` as an external fetching component. You are solely responsible for ensuring that any content you archive complies with the terms of service of the source platform, applicable copyright laws, and any relevant regulations in your jurisdiction.
 
-OmniCast does not host, distribute, or provide access to any third-party content. It is a personal archival tool intended for lawful, private use on local networks only. The developers make no warranties regarding the legality of any specific use. Use at your own risk.
+OmniCast does not host, index, distribute, or provide access to any proprietary third-party content. It is an open-source, personal archival tool intended strictly for lawful, private use. The developers make no warranties regarding the legality of any specific use. Use at your own risk.
 
 ---
 
 ## License
 
-[AGPLv3](LICENSE) — if you run a modified version of OmniCast Server, you must make your source code available.
+[AGPL-3.0-or-later](LICENSE)
