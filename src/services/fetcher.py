@@ -1,6 +1,7 @@
-# OmniCast — Personal offline media server
+# OmniCast - Personal Offline Video Server
 # Copyright (C) 2026-Present  DarThunder
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later.
+
 import json
 import logging
 import os
@@ -17,11 +18,9 @@ import requests
 import yt_dlp
 from PIL import Image
 
-from core.configs import SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET
 from core.database import redis_client
 from services import media_repo
 from services.blobstore import BlobError, blob_client
-from services.spotify_matcher import SpotifyMatcher
 from services.storage import IMAGE_EXTS, find_media_file, gen_hash
 
 log = logging.getLogger("omnicast.fetcher")
@@ -39,7 +38,7 @@ WORKDIR_SIZE_FACTOR = 2.5
 SHM_RESERVE_BYTES = 256 * 1024**2
 MIN_FREE_BYTES = 2 * 1024**3
 STALE_WORKDIR_SECONDS = 2 * 3600
-FALLBACK_BYTES_PER_SEC = {"video": 600 * 1024, "music": 32 * 1024}
+FALLBACK_BYTES_PER_SEC = 600 * 1024
 
 PROGRESS_INTERVAL = 1.0
 LOCK_TTL = 3600
@@ -48,14 +47,6 @@ TASK_TTL_DONE = 300
 TERMINAL_STATUSES = {"completed", "error"}
 
 VIDEO_FORMAT = "bestvideo[height<=?1080]+bestaudio/best[height<=?1080]"
-AUDIO_FORMAT = "bestaudio/best"
-_FORMATS = {"video": VIDEO_FORMAT, "music": AUDIO_FORMAT}
-
-spotify_matcher = SpotifyMatcher(
-    client_id=SPOTIPY_CLIENT_ID,
-    client_secret=SPOTIPY_CLIENT_SECRET,
-)
-
 
 class FetchError(Exception):
     ""
@@ -154,11 +145,11 @@ def _run_with_warp_retry(action, max_retries: int = 2):
                     continue
             raise
 
-def _extract_info(url: str, media_type: str) -> dict:
+def _extract_info(url: str) -> dict:
     if urlparse(url).scheme.lower() not in ALLOWED_SCHEMES:
         raise FetchError("La URL debe ser http o https")
 
-    opts = {**_base_opts(), "format": _FORMATS[media_type]}
+    opts = {**_base_opts(), "format": VIDEO_FORMAT}
 
     def _extract():
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -180,16 +171,16 @@ def _extract_info(url: str, media_type: str) -> dict:
         raise FetchError("El contenido supera la duración máxima permitida")
     return info
 
-def _estimate_bytes(info: dict, media_type: str) -> int:
+def _estimate_bytes(info: dict) -> int:
     formats = info.get("requested_formats") or [info]
     total = sum((f.get("filesize") or f.get("filesize_approx") or 0) for f in formats)
     if total:
         return int(total)
     duration = info.get("duration") or 0
-    return int(duration * FALLBACK_BYTES_PER_SEC[media_type])
+    return int(duration * FALLBACK_BYTES_PER_SEC)
 
-def _make_workdir(info: dict, media_type: str) -> Path:
-    needed = int(_estimate_bytes(info, media_type) * WORKDIR_SIZE_FACTOR)
+def _make_workdir(info: dict) -> Path:
+    needed = int(_estimate_bytes(info) * WORKDIR_SIZE_FACTOR)
 
     if SHM_DIR.is_dir():
         try:
@@ -278,14 +269,14 @@ def _upload_all(workdir: Path, media_hash: str) -> dict:
     uploaded.setdefault("thumb", None)
     return uploaded
 
-def _download(media_type: str, url: str, task_id: str | None, spotify_meta: dict | None = None) -> bool:
+def _download(url: str, task_id: str | None) -> bool:
     lock_key = None
     workdir = None
 
     try:
-        info = _extract_info(url, media_type)
+        info = _extract_info(url)
         try:
-            media_hash = gen_hash(info, media_type)
+            media_hash = gen_hash(info)
         except ValueError as e:
             raise FetchError("No se pudo identificar el contenido") from e
 
@@ -299,13 +290,10 @@ def _download(media_type: str, url: str, task_id: str | None, spotify_meta: dict
             set_task(task_id, status="completed", percent="100%")
             return True
 
-        workdir = _make_workdir(info, media_type)
+        workdir = _make_workdir(info)
 
-        if media_type == "music" and not spotify_meta:
-            spotify_meta = _spotify_lookup(info)
-
-        title = (spotify_meta or {}).get("title") or info.get("title") or "Sin título"
-        uploader = (spotify_meta or {}).get("uploader") or info.get("uploader")
+        title = info.get("title") or "Sin título"
+        uploader = info.get("uploader")
 
         metadata = {
             "id": media_hash,
@@ -327,27 +315,10 @@ def _download(media_type: str, url: str, task_id: str | None, spotify_meta: dict
             "outtmpl": str(workdir / "media.%(ext)s"),
             "progress_hooks": [progress_hook],
             "postprocessor_hooks": [postprocessor_hook],
-            "format": _FORMATS[media_type],
+            "format": VIDEO_FORMAT,
         }
 
-        if media_type == "video":
-            dl_opts.update({
-                "merge_output_format": "mp4",
-                "writethumbnail": True,
-            })
-        else:
-            cover_url = (spotify_meta or {}).get("cover_url")
-            has_cover = bool(cover_url) and _save_spotify_cover(cover_url, workdir)
-            postprocessors = [{"key": "FFmpegExtractAudio", "preferredcodec": "opus"}]
-            if not has_cover:
-                postprocessors += [
-                    {"key": "FFmpegThumbnailsConvertor", "format": "webp"},
-                    {"key": "EmbedThumbnail", "already_have_thumbnail": True},
-                ]
-            dl_opts.update({
-                "writethumbnail": not has_cover,
-                "postprocessors": postprocessors,
-            })
+        dl_opts.update({"merge_output_format": "mp4", "writethumbnail": True})
 
         set_task(task_id, status="downloading", percent="0%")
 
@@ -361,7 +332,7 @@ def _download(media_type: str, url: str, task_id: str | None, spotify_meta: dict
         blob_ids = _upload_all(workdir, media_hash)
 
         try:
-            registered = media_repo.register_media(media_hash, media_type, metadata, blob_ids)
+            registered = media_repo.register_media(media_hash, metadata, blob_ids)
         except Exception:
             _discard_blobs(blob_ids)
             raise
@@ -371,7 +342,7 @@ def _download(media_type: str, url: str, task_id: str | None, spotify_meta: dict
                 raise FetchError("No se pudo registrar el contenido")
 
         set_task(task_id, status="completed", percent="100%")
-        log.info("Descargado (%s): %s", media_type, title[:70])
+        log.info("Descargado (%s): %s", "video", title[:70])
         return True
 
     except FetchError as e:
@@ -403,7 +374,4 @@ def search_youtube(query: str, max_results: int = 5) -> list:
     return (info or {}).get("entries") or []
 
 def download_video(url: str, task_id: str | None = None) -> bool:
-    return _download("video", url, task_id)
-
-def download_music(url: str, task_id: str | None = None, spotify_meta: dict | None = None) -> bool:
-    return _download("music", url, task_id, spotify_meta)
+    return _download(url, task_id)

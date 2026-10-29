@@ -1,4 +1,7 @@
-from pathlib import Path
+# OmniCast - Personal Offline Video Server
+# Copyright (C) 2026-Present  DarThunder
+# SPDX-License-Identifier: AGPL-3.0-or-later.
+
 from sqlalchemy.orm import Session
 
 from models.db import AuditLog

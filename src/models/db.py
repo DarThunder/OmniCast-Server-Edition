@@ -1,7 +1,10 @@
+# OmniCast - Personal Offline Video Server
+# Copyright (C) 2026-Present  DarThunder
+# SPDX-License-Identifier: AGPL-3.0-or-later.
+
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -22,19 +25,15 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     username = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
+    hashed_password = Column(String, nullable=True)
     bio = Column(String, nullable=True)
-    public_key = Column(String(64), nullable=True)
+    osiris_sub = Column(String, unique=True, index=True, nullable=True)
 
     favorites = relationship("Favorite", back_populates="user", cascade="all, delete-orphan")
     playlists = relationship("Playlist", back_populates="user", cascade="all, delete-orphan")
 
 class GlobalMedia(Base):
     __tablename__ = "global_media"
-    __table_args__ = (
-        CheckConstraint("media_type IN ('video', 'music')", name="ck_global_media_type"),
-        Index("ix_global_media_type_added", "media_type", "added_at"),
-    )
 
     hash = Column(String, primary_key=True)
     title = Column(String, index=True)
@@ -45,7 +44,6 @@ class GlobalMedia(Base):
     extractor = Column(String)
     original_id = Column(String)
     source_url = Column(String)
-    media_type = Column(String, nullable=False)
     added_at = Column(DateTime, nullable=False, default=utcnow)
     aliases = Column(String, index=True, nullable=False)
 
@@ -114,7 +112,6 @@ class DownloadTask(Base):
     id = Column(String, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     url = Column(String)
-    media_type = Column(String)
     status = Column(String, default="pending")
     created_at = Column(DateTime, nullable=False, default=utcnow)
 

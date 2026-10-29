@@ -1,6 +1,6 @@
-# OmniCast — Personal offline media server
+# OmniCast - Personal Offline Video Server
 # Copyright (C) 2026-Present  DarThunder
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later.
 
 import logging
 from contextlib import contextmanager
@@ -45,21 +45,20 @@ def to_metadata(row) -> dict:
         "downloaded_at": added.isoformat() if added else None,
     }
 
-def get_blobs(media_hash: str, media_type: str | None = None) -> dict | None:
+def get_blobs(media_hash: str) -> dict | None:
     with _session() as db:
         row = _row(db, media_hash)
         if not row or not row.blobs:
             return None
-        if media_type and row.media_type != media_type:
-            return None
+
         return dict(row.blobs)
 
-def get_blob_id(media_hash: str, role: str, media_type: str | None = None) -> int | None:
-    blobs = get_blobs(media_hash, media_type)
+def get_blob_id(media_hash: str, role: str) -> int | None:
+    blobs = get_blobs(media_hash)
     return blobs.get(role) if blobs else None
 
-def get_media_blob_id(media_hash: str, media_type: str | None = None) -> int | None:
-    return get_blob_id(media_hash, "media", media_type)
+def get_media_blob_id(media_hash: str) -> int | None:
+    return get_blob_id(media_hash, "media")
 
 def get_thumbnail_blob_id(media_hash: str) -> int | None:
     return get_blob_id(media_hash, "thumb")
@@ -80,26 +79,24 @@ def get_metadata_many(media_hashes) -> dict[str, dict]:
             found.update({r.hash: to_metadata(r) for r in rows})
     return found
 
-def list_metadata(media_type: str | None = None) -> list[dict]:
+def list_metadata() -> list[dict]:
     with _session() as db:
         query = db.query(GlobalMedia).filter(GlobalMedia.blobs.isnot(None))
-        if media_type:
-            query = query.filter(GlobalMedia.media_type == media_type)
+        
         rows = query.order_by(GlobalMedia.added_at.desc()).all()
         return [to_metadata(r) for r in rows if r.blobs]
 
-def feed_page(media_type: str | None, skip: int, limit: int) -> tuple[list[dict], bool]:
+def feed_page(skip: int, limit: int) -> tuple[list[dict], bool]:
     with _session() as db:
         query = db.query(GlobalMedia).filter(GlobalMedia.blobs.isnot(None))
-        if media_type and media_type != "all":
-            query = query.filter(GlobalMedia.media_type == media_type)
+        
         rows = (
             query.order_by(desc(GlobalMedia.added_at), GlobalMedia.hash)
             .offset(skip).limit(limit + 1).all()
         )
         return [to_metadata(r) for r in rows[:limit]], len(rows) > limit
 
-def register_media(media_hash: str, media_type: str, meta: dict, blob_ids: dict) -> bool:
+def register_media(media_hash: str, meta: dict, blob_ids: dict) -> bool:
     title = meta.get("title") or "Sin título"
     uploader = meta.get("uploader")
     fields = {
@@ -116,12 +113,6 @@ def register_media(media_hash: str, media_type: str, meta: dict, blob_ids: dict)
         try:
             row = _row(db, media_hash)
             if row:
-                if row.media_type != media_type:
-                    log.warning(
-                        "El hash %s ya existe como '%s'; no se registra como '%s'",
-                        media_hash, row.media_type, media_type,
-                    )
-                    return False
                 if row.blobs:
                     return False
                 for key, value in fields.items():
@@ -131,7 +122,6 @@ def register_media(media_hash: str, media_type: str, meta: dict, blob_ids: dict)
             else:
                 db.add(GlobalMedia(
                     hash=media_hash,
-                    media_type=media_type,
                     aliases=generate_search_aliases(title, uploader or "", ""),
                     **fields,
                 ))

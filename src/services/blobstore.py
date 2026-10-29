@@ -1,6 +1,6 @@
-# OmniCast — Personal offline media server
+# OmniCast - Personal Offline Video Server
 # Copyright (C) 2026-Present  DarThunder
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later.
 
 import logging
 import mimetypes
@@ -21,12 +21,10 @@ STREAM_BLOCK = 1024 * 1024
 READ_BYTES_MAX = 16 * 1024 * 1024
 
 _MIME_OVERRIDES = {
-    ".opus": "audio/ogg",
     ".mp4": "video/mp4",
     ".webp": "image/webp",
     ".json": "application/json",
 }
-
 
 class BlobError(Exception):
     def __init__(self, message: str, status_code: int | None = None, headers: dict | None = None):
@@ -34,14 +32,12 @@ class BlobError(Exception):
         self.status_code = status_code
         self.headers = headers or {}
 
-
 def _mime_for(path: Path) -> str:
     return (
         _MIME_OVERRIDES.get(path.suffix.lower())
         or mimetypes.guess_type(path.name)[0]
         or "application/octet-stream"
     )
-
 
 def _check(resp: httpx.Response) -> httpx.Response:
     if resp.is_error:
@@ -52,13 +48,11 @@ def _check(resp: httpx.Response) -> httpx.Response:
         raise BlobError(f"{resp.status_code} {detail}", status_code=resp.status_code, headers=dict(resp.headers))
     return resp
 
-
 def stream_body(resp: httpx.Response, block: int = STREAM_BLOCK) -> Iterator[bytes]:
     try:
         yield from resp.iter_bytes(block)
     finally:
         resp.close()
-
 
 class BlobClient:
     def __init__(self, base_url: str = HOLDER_URL):

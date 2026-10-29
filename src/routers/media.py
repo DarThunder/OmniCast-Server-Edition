@@ -1,9 +1,11 @@
+# OmniCast - Personal Offline Video Server
+# Copyright (C) 2026-Present  DarThunder
+# SPDX-License-Identifier: AGPL-3.0-or-later.
+
 import asyncio
 import json
 import logging
-import re
 import uuid
-from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
@@ -14,10 +16,8 @@ from core.database import get_db, redis_client
 from core.audit import log_action
 from services import media_repo
 from services.blobstore import BlobError, blob_client, stream_body
-from services.fetcher import download_music, download_video, search_youtube
-from services.torrent_fetcher import download_torrent, search_prowlarr
+from services.fetcher import download_video, search_youtube
 from models.db import User
-from models.schemas import TorrentDownloadRequest
 from routers.dependencies import get_current_user
 
 log = logging.getLogger("omnicast.media")
@@ -28,7 +28,6 @@ DISCOVER_MAX_TOTAL = 100
 
 _PASSTHROUGH = ("content-length", "content-range", "accept-ranges")
 _THUMB_CACHE = "public, max-age=86400"
-_CONTROL_CHARS = re.compile(r'[\\/*?:"<>|\x00-\x1f\x7f]')
 
 router = APIRouter(tags=["Media"])
 
@@ -58,7 +57,7 @@ def _blob_failure(e: BlobError, what: str) -> Response:
 def _proxy_blob(
     file_id: int,
     request: Request,
-    default_mime: str,
+    mime: str,
     what: str,
     extra_headers: dict | None = None,
 ) -> Response:
@@ -77,7 +76,7 @@ def _proxy_blob(
     return _BlobStreamingResponse(
         upstream,
         status_code=upstream.status_code,
-        media_type=upstream.headers.get("content-type") or default_mime,
+        media_type=mime,
         headers=headers,
     )
 
@@ -162,17 +161,8 @@ async def discover_media(
         "results": page_results
     }
 
-@router.get("/discover/torrents")
-async def discover_torrents_route(
-    q: str = Query(..., min_length=2),
-    category: str = Query("all", pattern="^(all|movie|tv)$"),
-    user: User = Depends(get_current_user),
-):
-    results = await asyncio.to_thread(search_prowlarr, q.strip(), category)
-    return {"results": results}
-
 @router.get("/search")
-def search_media(q: str = Query(..., min_length=1), media_type: str | None = Query(None), db: Session = Depends(get_db)):
+def search_media(q: str = Query(..., min_length=1), db: Session = Depends(get_db)):
     clean_query = "".join(c for c in q if c.isalnum() or c.isspace()).strip()
     if not clean_query:
         return []
@@ -180,70 +170,34 @@ def search_media(q: str = Query(..., min_length=1), media_type: str | None = Que
     fts_query = " ".join(f'"{word}"*' for word in clean_query.split())
 
     query = text("""
-        SELECT gm.hash, gm.title, gm.uploader, gm.media_type, gm.added_at, gm.aliases,
+        SELECT gm.hash, gm.title, gm.uploader, gm.added_at, gm.aliases,
                gm.duration, gm.hash AS id
         FROM global_media gm
         JOIN global_media_fts fts ON gm.hash = fts.hash
         WHERE global_media_fts MATCH :query
           AND gm.blobs IS NOT NULL
-          AND (:media_type IS NULL OR gm.media_type = :media_type)
         ORDER BY bm25(global_media_fts)
         LIMIT 25;
     """)
-    return db.execute(query, {"query": fts_query, "media_type": media_type}).mappings().all()
+    return db.execute(query, {"query": fts_query}).mappings().all()
 
 @router.get("/feed", dependencies=[Depends(get_current_user)])
 def get_feed(
-    media_type: str = Query("all", pattern="^(all|video|music)$"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ):
-    feed, has_more = media_repo.feed_page(media_type, skip, limit)
+    feed, has_more = media_repo.feed_page(skip, limit)
     return {
         "feed": feed,
         "next_skip": skip + len(feed) if has_more else None,
     }
 
-@router.get("/feed/library", dependencies=[Depends(get_current_user)])
-def get_library(media_type: str = "music"):
-    return {"library": media_repo.list_metadata(media_type)}
-
 @router.get("/video/{hash}", dependencies=[Depends(get_current_user)])
 def get_video_route(hash: str, request: Request):
-    file_id = media_repo.get_media_blob_id(hash, "video")
+    file_id = media_repo.get_media_blob_id(hash)
     if file_id is None:
         raise HTTPException(status_code=404, detail="Video not found")
     return _proxy_blob(file_id, request, "video/mp4", "Video")
-
-@router.get("/music/{hash}", dependencies=[Depends(get_current_user)])
-def get_music_stream_route(hash: str, request: Request):
-    file_id = media_repo.get_media_blob_id(hash, "music")
-    if file_id is None:
-        raise HTTPException(status_code=404, detail="Música no encontrada")
-    return _proxy_blob(file_id, request, "audio/ogg", "Música")
-
-@router.get("/music/{hash}/download")
-def download_music_file(hash: str, request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    file_id = media_repo.get_media_blob_id(hash, "music")
-    if file_id is None:
-        raise HTTPException(status_code=404, detail="Música no encontrada")
-
-    meta = media_repo.get_metadata(hash) or {}
-    title = meta.get("title") or "track"
-    uploader = meta.get("uploader") or ""
-
-    raw_name = f"{uploader} - {title}" if uploader else title
-    clean_name = _CONTROL_CHARS.sub("", raw_name).strip() or "track"
-    filename = f"{clean_name}.opus"
-    ascii_name = filename.encode("ascii", "ignore").decode() or "track.opus"
-
-    log_action(db, current_user.id, "EXPORT_MEDIA", f"Exportó archivo de audio Hash: {hash}")
-    return _proxy_blob(
-        file_id, request, "audio/ogg", "Música",
-        extra_headers={
-            "content-disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
-        },
-    )
 
 @router.get("/videos/progress/{task_id}", dependencies=[Depends(get_current_user)])
 def get_download_progress(task_id: str):
@@ -273,49 +227,4 @@ def set_video_route(url: str, background_tasks: BackgroundTasks, current_user: U
     return {
         "Message": "Download initiating in background! It be ready soon.",
         "task_id": task_id
-    }
-
-@router.post("/music")
-def set_music_route(url: str, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    task_id = str(uuid.uuid4())
-
-    initial_data = {
-        "status": "starting",
-        "percent": "0%",
-        "speed": "0KiB/s",
-        "eta": "Unknown"
-    }
-    redis_client.hset(f"task:{task_id}", mapping=initial_data)
-    redis_client.expire(f"task:{task_id}", 3600)
-
-    background_tasks.add_task(asyncio.to_thread, download_music, url, task_id)
-
-    log_action(db, current_user.id, "DOWNLOAD_MUSIC_START", f"URL: {url}")
-    return {
-        "Message": "¡Descarga de música iniciada en segundo plano!",
-        "task_id": task_id
-    }
-
-@router.post("/torrents")
-def start_torrent_download_route(
-    req: TorrentDownloadRequest,
-    background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    task_id = str(uuid.uuid4())
-    redis_client.hset(f"task:{task_id}", mapping={
-        "status": "starting",
-        "percent": "0%",
-        "speed": "0KiB/s",
-        "eta": "Unknown",
-    })
-    redis_client.expire(f"task:{task_id}", 3600)
-    background_tasks.add_task(
-        asyncio.to_thread, download_torrent, req.uri, req.title, req.indexer, task_id
-    )
-    log_action(db, current_user.id, "DOWNLOAD_TORRENT_START", f"Title: {req.title}")
-    return {
-        "Message": "Descarga de torrent iniciada en segundo plano",
-        "task_id": task_id,
     }

@@ -1,10 +1,12 @@
+# OmniCast - Personal Offline Video Server
+# Copyright (C) 2026-Present  DarThunder
+# SPDX-License-Identifier: AGPL-3.0-or-later.
+
 import redis
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-from core.configs import BASE_STORE, DATABASE_URL, REDIS_PASSWD
-
-BASE_STORE.mkdir(parents=True, exist_ok=True)
+from core.configs import DATABASE_URL, REDIS_PASSWD
 
 engine = create_engine(
     DATABASE_URL,
@@ -74,14 +76,13 @@ redis_client = redis.Redis(
     host="localhost",
     port=int("6379"),
     password=None,
-    db=0,
+    db=1,
     decode_responses=True,
     socket_timeout=5,
     socket_connect_timeout=3,
 )
 
 Base = declarative_base()
-
 
 def get_db():
     db = SessionLocal()

@@ -1,3 +1,7 @@
+# OmniCast - Personal Offline Video Server
+# Copyright (C) 2026-Present  DarThunder
+# SPDX-License-Identifier: AGPL-3.0-or-later.
+
 import asyncio
 from pathlib import Path
 import io
@@ -11,7 +15,7 @@ from PIL import Image
 
 from core.audit import log_action
 from core.database import get_db
-from core.configs import opts
+from core.configs import PROFILES_PATH
 from models.db import Favorite, GlobalMedia, Playlist, PlaylistItem, User, PlaybackHistory
 from models.schemas import PlaylistCreate, PlaylistUpdate, UserProfileUpdate, PlaybackHistoryUpdate
 from services import media_repo
@@ -33,7 +37,7 @@ def _safe_user_dir(username: str) -> tuple[str, Path]:
     safe_username = re.sub(r"[^a-zA-Z0-9_-]", "", username)
     if not safe_username:
         raise HTTPException(status_code=400, detail="Nombre de usuario inválido para archivo")
-    profiles_dir = Path(opts["profiles_path"])
+    profiles_dir = Path(PROFILES_PATH)
     return safe_username, profiles_dir / safe_username
 
 def _covers_dir(username: str) -> Path:
@@ -120,9 +124,10 @@ async def upload_pfp(
 
 @router.get("/pfp")
 def get_pfp(current_user: User = Depends(get_current_user)):
-    profiles_dir = Path(opts["profiles_path"])
+    profiles_dir = Path(PROFILES_PATH)
     safe_username, user_dir = _safe_user_dir(current_user.username)
     user_pfp = user_dir / f"{safe_username}.webp"
+    print(user_pfp)
     default_pfp = profiles_dir / "default.webp"
     
     if user_pfp.exists():
@@ -165,6 +170,22 @@ def add_favorite(
     updated_favorites = [fav.media_hash for fav in current_user.favorites]
     log_action(db, current_user.id, "ADD_FAVORITE", f"Video Hash: {v_hash}")
     return {"message": "Video añadido a favoritos", "favorites": updated_favorites}
+
+@router.delete("/favorites/{v_hash}")
+def remove_favorite(
+    v_hash: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    fav = db.query(Favorite).filter(
+        Favorite.user_id == current_user.id,
+        Favorite.media_hash == v_hash,
+    ).first()
+    if fav:
+        db.delete(fav)
+        db.commit()
+    log_action(db, current_user.id, "REMOVE_FAVORITE", f"Hash: {v_hash}")
+    return {"message": "Quitado de favoritos"}
 
 @router.get("/playlists")
 def list_playlists(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -219,12 +240,10 @@ def create_empty_playlist(
         "name": new_playlist.name,
         "description": new_playlist.description or ""
     }
- 
- 
+
 @router.get("/playlists/{playlist_id}")
 def get_playlist(
     playlist_id: int,
-    media_type: str | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -236,23 +255,14 @@ def get_playlist(
                        .all()
  
     hashes = [it.media_hash for it in playlist_items]
-    types = {}
-    if hashes:
-        rows = db.query(GlobalMedia.hash, GlobalMedia.media_type)\
-                 .filter(GlobalMedia.hash.in_(hashes))\
-                 .all()
-        types = {h: t for h, t in rows}
     metas = media_repo.get_metadata_many(hashes)
 
     items = []
     for it in playlist_items:
-        item_type = types.get(it.media_hash)
-        if media_type and item_type != media_type:
-            continue
         meta = metas.get(it.media_hash)
         if meta is None:
             continue
-        items.append({**meta, "media_type": item_type})
+        items.append({**meta, "media_type": "video"})
  
     return {
         "id": str(playlist.id),

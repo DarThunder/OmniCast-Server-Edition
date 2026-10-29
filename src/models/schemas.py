@@ -1,3 +1,7 @@
+# OmniCast - Personal Offline Video Server
+# Copyright (C) 2026-Present  DarThunder
+# SPDX-License-Identifier: AGPL-3.0-or-later.
+
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -39,7 +43,5 @@ class PlaylistUpdate(BaseModel):
 class PlaybackHistoryUpdate(BaseModel):
     position_ms: int
 
-class TorrentDownloadRequest(BaseModel):
-    uri: str
-    title: str
-    indexer: str = "Torrent"
+class PlaylistOrder(BaseModel):
+    hashes: list[str]

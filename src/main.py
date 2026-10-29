@@ -1,7 +1,6 @@
-# main.py
-# OmniCast — Personal offline media server
+# OmniCast - Personal Offline Video Server
 # Copyright (C) 2026-Present  DarThunder
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later.
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -9,12 +8,11 @@ import shutil
 import socket
 import subprocess
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 import uvicorn
 
-from core.configs import opts
+from core.configs import PORT
 from core.database import Base, engine, init_fts
-from routers import auth, media, users
+from routers import media, users
 
 RED = "\033[91m"
 GREEN = "\033[92m"
@@ -63,7 +61,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="OmniCast",
-    description="Personal offline media server",
+    description="Personal offline video server",
     lifespan=lifespan,
 )
 
@@ -76,10 +74,8 @@ async def debug_tasks():
     tasks = asyncio.all_tasks()
     return {"total": len(tasks), "tasks": [str(t) for t in tasks]}
 
-app.include_router(auth.router)
 app.include_router(media.router)
 app.include_router(users.router)
-app.mount("/", StaticFiles(directory="web", html=True), name="web")
 
 class KeepaliveServer(uvicorn.Server):
     async def startup(self, sockets=None):
@@ -95,7 +91,7 @@ class KeepaliveServer(uvicorn.Server):
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5)
 
 if __name__ == "__main__":
-    port = opts.get("port")
+    port = PORT
     config = uvicorn.Config(
         app=app,
         host="0.0.0.0",
